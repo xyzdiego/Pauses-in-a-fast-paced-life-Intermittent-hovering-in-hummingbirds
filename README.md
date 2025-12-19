@@ -1,5 +1,7 @@
 # Pauses-in-a-fast-paced-life-Intermittent-hovering-in-hummingbirds
 
+![Behavioral Ecophysics Banner](https://ecophysics.org/wp-content/uploads/2024/09/Behavioral-Ecophysics-text-logo-3D.png)
+
 This repository contains the source code and data required to reproduce comparative phylogenetic analyses on behavioral (flight pauses) and morphological (wing coloration, morphometrics) traits in a hummingbird species assemblage (*Trochilidae*).
 
 ## Project Description
