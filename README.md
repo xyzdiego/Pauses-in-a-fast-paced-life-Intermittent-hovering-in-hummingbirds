@@ -1,4 +1,4 @@
-# Pauses-in-a-fast-paced-life-Intermittent-hovering-in-hummingbirds
+# Pauses in a fast paced life intermittent hovering in hummingbirds
 
 ![Behavioral Ecophysics Banner](https://ecophysics.org/wp-content/uploads/2024/09/Behavioral-Ecophysics-text-logo-3D.png)
 
@@ -31,3 +31,18 @@ install.packages("pacman")
 pacman::p_load(phytools, ggtree, caper, tidyverse, RColorBrewer, 
                readxl, janitor, nlme, ape, phylolm, cowplot, 
                caret, kableExtra, ggplotify)
+```
+
+## Visualization & Outputs
+
+The code automatically generates high-quality composite figures:
+ 
+ * **Tanglegrams:** Mirrored visualization comparing the evolutionary history of flight pauses vs. underwing coloration.
+ * **Composite Plots:** Integration of phylogenies with violin plots (data distribution) and forest plots (PGLS coefficients with 95% confidence intervals).
+ * **Summary Tables:** Stylized tables containing comparative metrics (q rates, D statistic, F-statistics, AIC).
+
+## Contribution & Usage
+
+If you use this code or data for your research, please cite this repository and the associated article.
+
+License: MIT
