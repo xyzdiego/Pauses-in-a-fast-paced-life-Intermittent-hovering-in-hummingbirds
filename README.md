@@ -14,9 +14,10 @@ Key analyses include:
 
 ## Repository Structure
 
-* `script_analisis.R`: Main R script containing the full workflow (cleaning, modeling, plotting).
-* `Database_Simulation.xlsx`: Dataset containing morphological and behavioral traits.
-* `arbol.nwk`: Time-calibrated phylogeny in Newick format.
+* `Data/`:
+  - `script_hummingbirds.R`: Main R script containing the full workflow (cleaning, modeling, plotting).
+  - `Database_Simulation.xlsx`: Dataset containing morphological and behavioral traits.
+  - `arbol.nwk`: Time-calibrated phylogeny in Newick format.
 * `outputs/`: Directory for saving generated figures.
 
 ## Requirements & Installation
