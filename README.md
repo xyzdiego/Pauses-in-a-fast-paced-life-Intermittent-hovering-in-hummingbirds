@@ -24,10 +24,13 @@ Key analyses include:
 
 ## Requirements & Installation
 
-This analysis is executed in **R**. It requires the installation of the following libraries, which are managed via `pacman` within the script:
+This analysis is executed in **R**. Key dependencies include standard CRAN packages and `ggtree` from Bioconductor. Run the following code to set up the environment:
 
 ```r
-install.packages("pacman")
+if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!require("ggtree", quietly = TRUE)) BiocManager::install("ggtree")
+
+if(!require(pacman)) install.packages("pacman")
 pacman::p_load(phytools, ggtree, caper, tidyverse, RColorBrewer, 
                readxl, janitor, nlme, ape, phylolm, cowplot, 
                caret, kableExtra, ggplotify)
