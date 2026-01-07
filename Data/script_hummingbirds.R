@@ -5,6 +5,9 @@ setwd(WORK_DIR)
 
 # LIBRARIES AND CONFIGURATION --------------------------------------------------
 
+if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!require("ggtree", quietly = TRUE)) BiocManager::install("ggtree")
+
 if(!require(pacman)) install.packages("pacman")
 pacman::p_load(
     phytools, ggtree, caper, tidyverse, RColorBrewer, readxl, janitor, nlme, 
@@ -316,8 +319,11 @@ if (length(levels(r1)) == 2 && length(levels(r3)) == 2){
 
 # TANGLEGRAM PLOT (MIRRORED TREE) ----------------------------------------------
 
-# Colors and Clades
-unique_clades <- unique(data_bin$clade)
+# Colors and Clades 
+tips_in_order <- tree_bin$tip.label
+clades_ordered <- data_bin$clade[match(tips_in_order, data_bin$species)]
+unique_clades <- unique(rev(clades_ordered))
+
 cols_clades <- RColorBrewer::brewer.pal(max(length(unique_clades), 3), 
                                         "Paired")[1:length(unique_clades)]
 names(cols_clades) <- unique_clades
@@ -335,13 +341,13 @@ for (c in unique_clades) {
     }
 }
 
-# Wing Color Mapping (Corrected and aligned)
+# Wing Color Mapping
 wing_levels <- unique(trimws(tolower(as.character(data_bin$wing_color))))
 cols_wing_map <- setNames(wing_levels, wing_levels)
 
 if ("indigo" %in% names(cols_wing_map)) cols_wing_map["indigo"] <- "#4B0082"
 if ("sapphire" %in% names(cols_wing_map)) cols_wing_map["sapphire"] <- "#2138AB"
-if ("white" %in% names(cols_wing_map)) cols_wing_map["white"] <- "gray60"
+if ("white" %in% names(cols_wing_map)) cols_wing_map["white"] <- "lightgoldenrod2"
 if ("gray" %in% names(cols_wing_map)) cols_wing_map["gray"] <- "gray35"
 if ("orange" %in% names(cols_wing_map)) cols_wing_map["orange"] <- "darkorange"
 
@@ -372,11 +378,10 @@ plot(tree_bin, cex = 0.95, no.margin = TRUE, label.offset = 0.02,
      direction = "rightwards", show.tip.label = FALSE, 
      x.lim = xlim_l, edge.color = edge_cols, edge.width = edge_widths)
 
-mtext("Hovering Pauses", side = 3, line = -2, font = 2, at = max_depth * 0.5)
 nodelabels(pie = ace_hover$lik.anc, piecol = cols_hover_fix, cex = 0.45)
 tiplabels(pch = 21, bg = cols_hover_fix[states_hover], cex = 3)
 legend("bottomleft", legend = names(cols_hover_fix), fill = cols_hover_fix,
-       title = "Hovering", cex = 1, bty = "n")
+       title = "Hovering Pauses", cex = 1, bty = "n")
 
 # Center: Labels
 pos_center <- max_depth * (2.6 - 1) * 0.5 + (max_depth * 0.1)
@@ -392,14 +397,12 @@ if (!exists("ace_color")) {
 plot(tree_bin, cex = 0.95, no.margin = TRUE, label.offset = 0.02, 
      direction = "leftwards", show.tip.label = FALSE, 
      x.lim = xlim_r, edge.color = edge_cols, edge.width = edge_widths)
-
-mtext("Underwing coloration", side = 3, line = -2, font = 2, at = max_depth * 0.5)
-cols_right <- c("NO" = "gray40", "YES" = "#4B0082")
+cols_right <- c("NO" = "gray80", "YES" = "#4B0082")
 
 nodelabels(pie = ace_color$lik.anc, piecol = cols_right, cex = 0.45)
 tiplabels(pch = 21, bg = cols_right[data_bin$color], cex = 3)
 legend("bottomright", legend = c("Gray", "Colorful"), 
-       fill = c("gray40", "#4B0082"), title = "Underwing coloration", 
+       fill = c("gray80", "#4B0082"), title = "Underwing Coloration", 
        cex = 1, bty = "n")
 
 legend("topright", legend = names(cols_clades), col = cols_clades, 
@@ -461,7 +464,7 @@ p_conf_color <- create_forest_plot(df_conf_color, cols_color_plt,
 final_plot <- plot_grid(p_conf_hover, p_violin_hover, p_conf_color, 
                         p_violin_color, ncol = 2, align = 'h', 
                         labels = c("A", "B", "C", "D"))
-print(final_plot)
+final_plot
 
 # COMPREHENSIVE SUMMARY TABLE --------------------------------------------------
 
@@ -497,21 +500,25 @@ kbl_table <- summary_table %>%
     kable_classic(full_width = F, html_font = "Cambria") %>%
     row_spec(0, bold = T, color = "white", background = "#2c3e50") %>%
     column_spec(1, bold = T, border_right = T, width = "4cm", color = "#555") %>%
-    pack_rows("1. Evolutionary Signal (Categorical Trait)", 1, 4, 
-              label_row_css = "background-color:#ecf0f1;color:#333;font-weight:bold;") %>%
-    pack_rows("2. Model: Wing Length ~ Trait", 5, 8, 
-              label_row_css = "background-color:#d1f2eb;color:#0e6655;font-weight:bold;") %>%
-    pack_rows("3. Model: Body Mass ~ Trait", 9, 12, 
-              label_row_css = "background-color:#d6eaf8;color:#154360;font-weight:bold;") %>%
-    pack_rows("4. Model: Relation Wing Length vs Body Mass ~ Trait", 13, 16, 
-              label_row_css = "background-color:#fce8d6;color:#a04000;font-weight:bold;") %>%
+    pack_rows(
+        "1. Evolutionary Signal (Categorical Trait)", 1, 4, 
+        label_row_css = "background-color:#ecf0f1;color:#333;font-weight:bold;") %>%
+    pack_rows(
+        "2. Model: Wing Length ~ Trait", 5, 8,
+        label_row_css = "background-color:#d1f2eb;color:#0e6655;font-weight:bold;") %>%
+    pack_rows(
+        "3. Model: Body Mass ~ Trait", 9, 12, 
+        label_row_css = "background-color:#d6eaf8;color:#154360;font-weight:bold;") %>%
+    pack_rows(
+        "4. Model: Relation Wing Length vs Body Mass ~ Trait", 13, 16, 
+        label_row_css = "background-color:#fce8d6;color:#a04000;font-weight:bold;") %>%
     row_spec(idx_pvals, bold = T)
 
 if (length(red_rows) > 0) {
     kbl_table <- kbl_table %>% row_spec(red_rows, color = "red", bold = T)
 }
 
-print(kbl_table)
+kbl_table
 
 # Transtition pauses ------------------------------------------------------
 
@@ -534,7 +541,7 @@ p_tree_trans <- as.grob(function() {
          no.margin = TRUE, 
          label.offset = 0.05, 
          direction = "rightwards", 
-         show.tip.label = TRUE,       
+         show.tip.label = TRUE,        
          edge.color = edge_cols,      
          edge.width = 3)              
     mtext("Transition Pauses Phylogeny", side = 3, line = -1, font = 2, cex = 1)
@@ -563,12 +570,12 @@ p_forest_trans <- create_forest_plot(df_conf_trans, cols_trans,
                                      "Evolutionary Effect (Model)")
 
 col_right <- plot_grid(p_violin_trans, p_forest_trans, 
-                         ncol = 1, 
-                         labels = c("B", "C"))
+                       ncol = 1, 
+                       labels = c("B", "C"))
 
 final_trans_plot <- plot_grid(p_tree_trans, col_right, 
                               ncol = 2, 
                               labels = c("A", ""), 
                               rel_widths = c(1, 1)) 
 
-print(final_trans_plot)
+final_trans_plot
