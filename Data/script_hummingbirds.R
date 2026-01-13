@@ -579,3 +579,119 @@ final_trans_plot <- plot_grid(p_tree_trans, col_right,
                               rel_widths = c(1, 1)) 
 
 final_trans_plot
+
+# PHYLOGENY AND CLADE-LEVEL MORPHOLOGY ------------------------------------
+
+df_phylo_morpho <- data_clean %>%
+    filter(species != "Sternoclyta_cyanopectus") %>%
+    filter(!is.na(wing_length)) %>% 
+    droplevels()
+
+tree_phylo_morpho <- keep.tip(tree_mod, 
+                              intersect(tree_mod$tip.label, 
+                                        df_phylo_morpho$species))
+df_phylo_morpho <- df_phylo_morpho[match(tree_phylo_morpho$tip.label, 
+                                         df_phylo_morpho$species), ]
+
+
+df_phylo_morpho$clean_label <- gsub("_", " ", df_phylo_morpho$species)
+df_phylo_morpho$clean_label <- gsub("Coeligena bonapartei", 
+                                    "Coeligena bonapartei/consita", 
+                                    df_phylo_morpho$clean_label)
+
+# Map colors
+df_phylo_morpho$tip_color_hex <- cols_wing_map[trimws(
+    tolower(as.character(df_phylo_morpho$wing_color)))]
+
+# If a color didn't match (NA), set to black so the name is visible.
+na_idx <- which(is.na(df_phylo_morpho$tip_color_hex))
+if(length(na_idx) > 0) {
+    df_phylo_morpho$tip_color_hex[na_idx] <- "black" 
+    cat("Warning: Some species had undefined wing colors and were colored black.\n")
+}
+
+white_idx <- which(df_phylo_morpho$tip_color_hex %in% c("white", 
+                                                        "#FFFFFF", "#ffffff"))
+if(length(white_idx) > 0) df_phylo_morpho$tip_color_hex[white_idx] <- "gray40"
+
+#  Create Legend for Wing Coloration 
+legend_data <- data.frame(
+    Color_Name = names(cols_wing_map),
+    Color_Hex = as.character(cols_wing_map)
+)
+legend_data$Color_Name[legend_data$Color_Hex == "beige"] <- "white"
+
+p_legend <- ggplot(legend_data, aes(x=1, y=1, color=Color_Name)) +
+    geom_point(size=4) +
+    scale_color_manual(name = "Wing Coloration", values = cols_wing_map) +
+    theme_void() +
+    theme(legend.position = "bottom", 
+          legend.title = element_text(face="bold"),
+          legend.text = element_text(size=10))
+wing_legend <- get_legend(p_legend)
+
+# Tree Visualization 
+clade_list <- split(df_phylo_morpho$species, df_phylo_morpho$clade)
+tree_grouped_full <- groupOTU(tree_phylo_morpho, clade_list)
+
+p_tree_final <- ggtree(tree_grouped_full, aes(color = group), 
+                       layout = "rectangular", 
+                       size = 1.1) %<+% df_phylo_morpho +
+    scale_color_manual(values = c("0" = "black", cols_clades)) +
+    
+    geom_tiplab(aes(label = clean_label, color = I(tip_color_hex)), 
+                size = 2.8, fontface = "bold", align = TRUE, 
+                linesize = 0.3, offset = 0.02) +
+    theme_tree() + 
+    theme(legend.position = "none",
+          plot.margin = margin(10, 0, 10, 10),
+          axis.line.x = element_blank(),
+          axis.text.x = element_blank(),
+          axis.ticks.x = element_blank()) + 
+    xlim(0, max(node.depth.edgelength(tree_phylo_morpho)) * 1.4)
+
+# Clade-Level Violin Plot 
+tips_order_final <- get_taxa_name(p_tree_final)
+ordered_df <- df_phylo_morpho[match(tips_order_final, df_phylo_morpho$species), ]
+clade_appearance <- unique(ordered_df$clade)
+df_phylo_morpho$clade_ordered <- factor(df_phylo_morpho$clade, 
+                                        levels = rev(clade_appearance))
+
+p_violin_final <- ggplot(df_phylo_morpho, aes(x = clade_ordered, 
+                                              y = wing_length, 
+                                              fill = clade_ordered)) +
+    geom_violin(trim = FALSE, scale = "width", alpha = 0.8, color = NA) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA, alpha = 0.8) +
+    geom_jitter(width = 0.1, size = 1, alpha = 0.4, color = "black") +
+    scale_fill_manual(values = cols_clades) +
+    coord_flip() +
+    labs(title = "Wing Length Distribution", x = "", y = "Wing Length (mm)") +
+    theme_minimal() +
+    theme(
+        legend.position = "none",
+        axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+        axis.title.x = element_text(size = 10, face = "bold"),
+        panel.grid.major.y = element_blank(), 
+        plot.margin = margin(10, 10, 10, 0)
+    )
+
+# Combine Tree, Violins, and Legend 
+main_plot <- plot_grid(
+    p_tree_final, 
+    p_violin_final, 
+    ncol = 2, 
+    align = "h", 
+    axis = "bt", 
+    rel_widths = c(1.8, 1), 
+    labels = c("A", "B")
+)
+
+# Add Legend at the bottom
+final_combined_plot <- plot_grid(
+    main_plot,
+    wing_legend,
+    ncol = 1,
+    rel_heights = c(1, 0.1) # Allocate small space at bottom for legend
+)
+
+final_combined_plot
