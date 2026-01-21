@@ -26,7 +26,7 @@ The project is organized as follows:
   - `arbol.nwk`: Time-calibrated phylogeny in Newick format.
 * **`R/`**:
   - `functions.R`: Custom helper functions for plotting and modeling.
-  - `legacy_script_hummingbirds.R`: Original monolithic script (archived).
+  - `legacy_analysis.R`: Original monolithic script (archived).
 * **`outputs/`**: Directory for saving generated high-resolution figures.
 
 ## Requirements & Installation
