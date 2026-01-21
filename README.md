@@ -16,11 +16,18 @@ Key analyses include:
 
 ## Repository Structure
 
-* `Data/`:
-  - `script_hummingbirds.R`: Main R script containing the full workflow (cleaning, modeling, plotting).
-  - `Database_Simulation.xlsx`: Dataset containing morphological and behavioral traits.
+The project is organized as follows:
+
+* **`Analysis_Hummingbirds.Rmd`**: Main RMarkdown document containing the full reproducible workflow and narrative.
+* **`Analysis_Hummingbirds.html`**: Compiled output report (knitted from the .Rmd).
+* **`Data/`**:
+  - `Trochilidae_MorphoBehavior_Data.xlsx`: Dataset containing morphological and behavioral traits.
+  - **[`Data_Dictionary.md`](Data/Data_Dictionary.md)**: Detailed description of variables, units, and taxonomic notes.
   - `arbol.nwk`: Time-calibrated phylogeny in Newick format.
-* `outputs/`: Directory for saving generated figures.
+* **`R/`**:
+  - `functions.R`: Custom helper functions for plotting and modeling.
+  - `legacy_script_hummingbirds.R`: Original monolithic script (archived).
+* **`outputs/`**: Directory for saving generated high-resolution figures.
 
 ## Requirements & Installation
 
