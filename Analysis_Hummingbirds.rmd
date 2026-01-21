@@ -1,0 +1,432 @@
+---
+title: "Pauses in a fast paced life: Intermittent hovering in hummingbirds"
+author: "Kristiina Hurme, Ana Melisa Fernandes, Diego Andrés Benitez Duarte, Marialejandra Castro-Farías, Gary Stiles, Ashley Smiley, Christopher J. Clark, Alejandro Rico-Guevara"
+output: 
+  html_document:
+    toc: true
+    toc_float: true
+    code_folding: show
+    theme: flatly
+    highlight: tango
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE, warning = FALSE, message = FALSE, fig.align = "center")
+```
+
+## 1. Introduction and Dependencies
+
+This document contains the reproducible workflow for the analysis of evolutionary correlations between flight behavior and morphology in hummingbirds.
+
+```{r libraries}
+# INSTALLATION AND LOADING
+if (!require("BiocManager", quietly = TRUE)) install.packages("BiocManager")
+if (!require("ggtree", quietly = TRUE)) BiocManager::install("ggtree")
+if (!require("pacman")) install.packages("pacman")
+if (!require("here")) install.packages("here") # Vital para rutas relativas
+
+pacman::p_load(
+    phytools, ggtree, caper, tidyverse, RColorBrewer, readxl, janitor, nlme, 
+    ape, phylolm, cowplot, caret, kableExtra, ggplotify, here
+)
+```
+
+## 2. Auxiliary Functions
+
+Custom functions defined for coefficient extraction, forest plot generation, and metric calculation.
+
+```{r functions}
+source(here::here("R", "functions.R"))
+```
+
+## 3. Data Loading and Curation
+
+Data and phylogeny are loaded using relative paths for reproducibility.
+
+```{r load_data}
+data_path <- here("Data", "Trochilidae_MorphoBehavior_Data.xlsx")
+tree_path <- here("Data", "arbol.nwk")
+
+data_raw <- read_excel(data_path, sheet = "Pausas_Tipo")
+data_raw <- data_raw[data_raw$Species != "Sternoclyta cyanopectus", ]
+tree_raw <- read.tree(tree_path) 
+
+# Data Cleaning
+data_raw[, c(FALSE, sapply(data_raw[,-1], is.character))] <- 
+    lapply(data_raw[, c(FALSE, sapply(data_raw[,-1], is.character))], factor)
+data_clean <- data_raw %>% clean_names()
+
+data_clean$species <- gsub(" ", "_", data_clean$species)
+tree_raw$tip.label <- gsub(" ", "_", tree_raw$tip.label)
+```
+
+### 3.1 Phylogenetic Tree Modification
+
+Manual addition of missing species based on literature/taxonomy.
+
+**Justification for tree manipulation**
+The species absent from the original phylogeny was grafted onto the clade to which it belongs (e.g., node 176). A short branch length was applied to treat the divergence as a recent speciation event or a conserved change, thus ensuring the inclusion of the species' morphological data in the analysis without overestimating its evolutionary uniqueness and without significantly affecting the phylogeny's topology. Values were sought that would not significantly alter the outcome of a PGLS or a phylogenetic signal (Lambda), aiming for small values compared to the total height of the tree.
+
+```{r tree_mod}
+tree_mod <- bind.tip(tree_raw, "Aglaeactis_aliciae", edge.length = 0.2, where = 176)
+tree_mod <- bind.tip(tree_mod, "Lamprolaima_rhami", edge.length = 3.2, where = 107)
+tree_mod <- bind.tip(tree_mod, "Sternoclyta_cyanopectus", edge.length = 6.0, where = 108)
+tree_mod <- bind.tip(tree_mod, "Oxypogon_lindenii", edge.length = 1.6, where = 230)
+tree_mod <- bind.tip(tree_mod, "Urochroa_leucura", edge.length = 0.8, where = 154)
+
+# Taxonomy Harmonization
+name_replacements <- c(
+    "Chlorostilbon_notatus" = "Chlorestes_notata", 
+    "Damophila_julie" = "Chlorestes_julie",
+    "Goethalsia_bella" = "Goldmania_bella", 
+    "Lophornis_pavoninus" = "Lophornis_adorabilis",
+    "Cyanophaia_bicolor" = "Riccordia_bicolor", 
+    "Amazilia_beryllina" = "Saucerottia_beryllina",
+    "Amazilia_castaneiventris" = "Saucerottia_castaneiventris", 
+    "Amazilia_cyanura" = "Saucerottia_cyanura",
+    "Heliodoxa_cyanopectus" = "Sternoclyta_cyanopectus", 
+    "Campylopterus_villaviscencio" = "Campylopterus_villaviscensio"
+)
+
+tree_mod$tip.label <- ifelse(tree_mod$tip.label %in% names(name_replacements), 
+                             name_replacements[tree_mod$tip.label], tree_mod$tip.label)
+
+if (any(tree_mod$edge.length <= 0)) tree_mod$edge.length[tree_mod$edge.length <= 0] <- 1e-6
+if (!is.ultrametric(tree_mod)) tree_mod <- chronopl(tree_mod, lambda = 1)
+tree_mod$tip.label <- gsub(" ", "_", tree_mod$tip.label)
+
+# Final Match
+common_spp <- intersect(data_clean$species, tree_mod$tip.label)
+tree_bin <- keep.tip(tree_mod, common_spp)
+data_bin <- data_clean %>% filter(species %in% common_spp) %>% arrange(match(species, tree_bin$tip.label))
+data_bin <- as.data.frame(data_bin)
+rownames(data_bin) <- data_bin$species
+
+data_bin <- data_bin %>%
+    filter(hovering_pauses %in% c("YES", "NO")) %>%
+    filter(color %in% c("YES", "NO")) %>%
+    filter(!is.na(wing_length)) %>% 
+    mutate(winglength_vs_mass = winglength_rel_mass2)
+
+final_spp <- intersect(data_bin$species, tree_bin$tip.label)
+tree_bin <- keep.tip(tree_bin, final_spp)
+data_bin <- data_bin[match(tree_bin$tip.label, data_bin$species), ]
+
+if (any(duplicated(tree_bin$tip.label))) {
+    dup_idx <- which(duplicated(tree_bin$tip.label))
+    tree_bin <- drop.tip(tree_bin, dup_idx)
+    data_bin <- data_bin[match(tree_bin$tip.label, data_bin$species), ]
+}
+
+data_bin$hovering_pauses_01 <- ifelse(data_bin$hovering_pauses == "YES", 1, 0)
+levels_bin <- c("NO", "YES")
+cols_bin <- RColorBrewer::brewer.pal(3, "Dark2")[1:2]
+names(cols_bin) <- levels_bin
+```
+
+## 4. Phylogenetic Signal & Modeling
+
+### 4.1 Phylogenetic Signal (D Statistic)
+
+```{r phylo_signal}
+signals_bin <- list()
+for (cat in levels_bin) {
+    var_bin <- as.numeric(data_bin$hovering_pauses == cat)
+    names(var_bin) <- data_bin$species
+    data_temp <- data.frame(species = data_bin$species, state_bin = var_bin, stringsAsFactors = FALSE)
+    comp_data <- comparative.data(tree_bin, data_temp, names.col = "species")
+    d_res <- phylo.d(comp_data, binvar = state_bin, permut = 100)
+    signals_bin[[cat]] <- d_res
+}
+print(signals_bin)
+```
+
+### 4.2 PhyloGLM & Heatmap
+
+```{r pgls_model, fig.width=8, fig.height=8}
+model_hover_yes <- phyloglm(hovering_pauses_01 ~ wing_length, 
+                            data = data_bin, phy = tree_bin, method = "logistic_MPLE")
+
+# Probability Heatmap
+prob_yes <- model_hover_yes$fitted.values
+prob_matrix <- cbind(NO = 1 - prob_yes, YES = prob_yes)
+rownames(prob_matrix) <- data_bin$species
+
+if (all(!is.na(prob_matrix))) {
+    phylo.heatmap(tree_bin, prob_matrix, standardize = FALSE, 
+                  legend = TRUE, fsize = 0.6, colors = c("#E41A1C", "#377EB8"))
+    title("Predicted Probabilities (P(NO), P(YES))")
+}
+```
+
+## 5. Evolutionary Correlations (Pagel)
+
+Testing correlated evolution between pauses and microhabitat/foraging strategy.
+
+```{r pagel}
+# Correlation vs Microhabitat
+data_pagel_hab <- data_bin %>%
+    mutate(habitat_bin = case_when(
+        microhabitat %in% c("Canopy", "Understory") ~ "Closed",
+        microhabitat %in% c("Open", "Mixed")        ~ "Open",
+        TRUE ~ NA_character_ 
+    )) %>%
+    filter(!is.na(habitat_bin), !is.na(hovering_pauses)) %>% droplevels()
+
+sp_hab <- intersect(data_pagel_hab$species, tree_bin$tip.label)
+tree_hab <- keep.tip(tree_bin, sp_hab)
+data_pagel_hab <- data_pagel_hab[match(sp_hab, data_pagel_hab$species), ]
+
+r1 <- setNames(factor(data_pagel_hab$hovering_pauses), data_pagel_hab$species)
+r2 <- setNames(factor(data_pagel_hab$habitat_bin), data_pagel_hab$species)
+
+if (length(levels(r1)) == 2 && length(levels(r2)) == 2){
+    fit_dep_hab <- fitPagel(tree_hab, r1, r2, model = "ER")
+    print(fit_dep_hab)
+}
+
+# Correlation vs Foraging
+data_pagel_for <- data_bin %>%
+    mutate(forage_bin = case_when(
+        foraging_type == "Territorial" ~ "Territorial",
+        foraging_type == "Opportunist" ~ "No_Territorial",
+        TRUE ~ NA_character_ 
+    )) %>%
+    filter(!is.na(forage_bin), !is.na(hovering_pauses)) %>% droplevels()
+
+sp_for <- intersect(data_pagel_for$species, tree_bin$tip.label)
+tree_for <- keep.tip(tree_bin, sp_for)
+data_pagel_for <- data_pagel_for[match(sp_for, data_pagel_for$species), ]
+r3 <- setNames(factor(data_pagel_for$forage_bin), data_pagel_for$species)
+
+if (length(levels(r1)) == 2 && length(levels(r3)) == 2){
+    fit_dep_for <- fitPagel(tree_for, r1, r3, model = "ER")
+    print(fit_dep_for)
+}
+```
+
+## 6. Visualization
+
+### 6.1 Tanglegram: Pauses vs Coloration
+
+```{r tanglegram, fig.width=12, fig.height=10}
+# Colors and Clades 
+tips_in_order <- tree_bin$tip.label
+clades_ordered <- data_bin$clade[match(tips_in_order, data_bin$species)]
+unique_clades <- unique(rev(clades_ordered))
+cols_clades <- RColorBrewer::brewer.pal(max(length(unique_clades), 3), "Paired")[1:length(unique_clades)]
+names(cols_clades) <- unique_clades
+
+edge_cols <- rep("gray10", nrow(tree_bin$edge))
+edge_widths <- rep(1, nrow(tree_bin$edge))
+for (c in unique_clades) {
+    sp_clade <- intersect(data_bin$species[data_bin$clade == c], tree_bin$tip.label)
+    if (length(sp_clade) > 0) {
+        idx <- which.edge(tree_bin, sp_clade)
+        edge_cols[idx] <- cols_clades[c]
+        edge_widths[idx] <- 4
+    }
+}
+
+wing_levels <- unique(trimws(tolower(as.character(data_bin$wing_color))))
+cols_wing_map <- setNames(wing_levels, wing_levels)
+if ("indigo" %in% names(cols_wing_map)) cols_wing_map["indigo"] <- "#4B0082"
+if ("sapphire" %in% names(cols_wing_map)) cols_wing_map["sapphire"] <- "#2138AB"
+if ("white" %in% names(cols_wing_map)) cols_wing_map["white"] <- "lightgoldenrod2"
+if ("gray" %in% names(cols_wing_map)) cols_wing_map["gray"] <- "gray35"
+if ("orange" %in% names(cols_wing_map)) cols_wing_map["orange"] <- "darkorange"
+
+ordered_idx <- match(tree_bin$tip.label, data_bin$species)
+ordered_colors <- as.character(data_bin$wing_color[ordered_idx])
+cols_wing_sp <- cols_wing_map[trimws(tolower(ordered_colors))]
+
+max_depth <- max(node.depth.edgelength(tree_bin))
+xlim_l <- c(-max_depth * 0.35, max_depth * 2.6) 
+xlim_r <- c(-max_depth * 0.35, max_depth * 2.6)
+
+clean_labels <- gsub("_", " ", tree_bin$tip.label)
+clean_labels <- gsub("Coeligena bonapartei", "Coeligena bonapartei/consita", clean_labels)
+
+layout(matrix(c(1,2), 1, 2))
+par(oma = c(0, 0, 0, 0), mar = c(0, 0, 2, 0)) 
+
+# Left: Hovering Pauses
+states_hover <- setNames(as.character(data_bin$hovering_pauses), data_bin$species)
+ace_hover <- ace(states_hover, tree_bin, type = "discrete", model = "ER")
+cols_hover_fix <- c("NO" = "#1B9E77", "YES" = "#D95F02") 
+
+plot(tree_bin, cex = 0.8, no.margin = TRUE, label.offset = 0.02, 
+     direction = "rightwards", show.tip.label = FALSE, 
+     x.lim = xlim_l, edge.color = edge_cols, edge.width = edge_widths)
+nodelabels(pie = ace_hover$lik.anc, piecol = cols_hover_fix, cex = 0.45)
+tiplabels(pch = 21, bg = cols_hover_fix[states_hover], cex = 2)
+legend("bottomleft", legend = names(cols_hover_fix), fill = cols_hover_fix,
+       title = "Hovering Pauses", cex = 1, bty = "n")
+
+# Center: Labels
+pos_center <- max_depth * (2.6 - 1) * 0.5 + (max_depth * 0.1)
+tiplabels(text = clean_labels, frame = "none", col = cols_wing_sp, 
+          font = 2, cex = 0.8, adj = 0.5, offset = pos_center)
+
+# Right: Underwing Coloration
+if (!exists("ace_color")) {
+    states_col <- setNames(as.character(data_bin$color), data_bin$species)
+    ace_color <- ace(states_col, tree_bin, type = "discrete", model = "ER")
+}
+plot(tree_bin, cex = 0.8, no.margin = TRUE, label.offset = 0.02, 
+     direction = "leftwards", show.tip.label = FALSE, 
+     x.lim = xlim_r, edge.color = edge_cols, edge.width = edge_widths)
+cols_right <- c("NO" = "gray80", "YES" = "#4B0082")
+
+nodelabels(pie = ace_color$lik.anc, piecol = cols_right, cex = 0.45)
+tiplabels(pch = 21, bg = cols_right[data_bin$color], cex = 2)
+legend("bottomright", legend = c("Gray", "Colorful"), 
+       fill = c("gray80", "#4B0082"), title = "Underwing Coloration", cex = 1, bty = "n")
+legend("topright", legend = names(cols_clades), col = cols_clades, 
+       lwd = 5, title = "Clades", cex = 0.8, bty = "n", ncol = 1)
+par(mfrow = c(1,1))
+```
+
+### 6.2 Composite Plot: Violins + Forest Plots
+
+```{r composite_plot, fig.width=10, fig.height=8}
+cols_hover_plt <- RColorBrewer::brewer.pal(3, "Dark2")[1:2]
+names(cols_hover_plt) <- c("NO", "YES")
+cols_color_plt <- c("NO" = "gray40", "YES" = "#4B0082")
+
+plot_data <- data_bin %>%
+    filter(hovering_pauses %in% c("YES", "NO"),
+           color %in% c("YES", "NO"),
+           !is.na(wing_length)) %>% droplevels()
+
+# Violins
+p_violin_hover <- ggplot(plot_data, aes(x = hovering_pauses, y = wing_length, fill = hovering_pauses)) +
+    geom_violin(trim = FALSE, alpha = 0.6, color = NA) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA, alpha = 0.8) +
+    geom_jitter(width = 0.1, size = 1.5, alpha = 0.4) +
+    scale_fill_manual(values = cols_hover_plt) +
+    labs(title = "Wing Length vs Hovering Pauses", y = "Wing Length (mm)", x = "Hovering Pauses") +
+    theme_minimal() + theme(legend.position = "none", plot.title = element_text(face = "bold", hjust = 0.5, size = 12))
+
+p_violin_color <- ggplot(plot_data, aes(x = color, y = wing_length, fill = color)) +
+    geom_violin(trim = FALSE, alpha = 0.6, color = NA) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA, alpha = 0.8) +
+    geom_jitter(width = 0.1, size = 1.5, alpha = 0.4) +
+    scale_fill_manual(values = cols_color_plt) +
+    scale_x_discrete(labels = c("NO" = "Gray", "YES" = "Colorful")) +
+    labs(title = "Wing Length vs Underwing Coloration", y = "Wing Length (mm)", x = "Underwing Coloration") +
+    theme_minimal() + theme(legend.position = "none", plot.title = element_text(face = "bold", hjust = 0.5, size = 12))
+
+# Forest Plots
+df_conf_hover <- get_forest_data("hovering_pauses", "wing_length", data_bin, tree_bin, cols_hover_plt)
+df_conf_color <- get_forest_data("color", "wing_length", data_bin, tree_bin, cols_color_plt)
+
+p_conf_hover <- create_forest_plot(df_conf_hover, cols_hover_plt, "Hovering Pauses")
+p_conf_color <- create_forest_plot(df_conf_color, cols_color_plt, "Underwing Coloration")
+
+plot_grid(p_conf_hover, p_violin_hover, p_conf_color, p_violin_color, ncol = 2, align = 'h', labels = c("A", "B", "C", "D"))
+```
+
+### 6.3 Clade-Level Morphology
+
+```{r clade_plot, fig.width=12, fig.height=12}
+df_phylo_morpho <- data_clean %>%
+    filter(species != "Sternoclyta_cyanopectus", !is.na(wing_length)) %>% droplevels()
+
+tree_phylo_morpho <- keep.tip(tree_mod, intersect(tree_mod$tip.label, df_phylo_morpho$species))
+df_phylo_morpho <- df_phylo_morpho[match(tree_phylo_morpho$tip.label, df_phylo_morpho$species), ]
+
+df_phylo_morpho$clean_label <- gsub("_", " ", df_phylo_morpho$species)
+df_phylo_morpho$clean_label <- gsub("Coeligena bonapartei", "Coeligena bonapartei/consita", df_phylo_morpho$clean_label)
+
+# Map colors
+df_phylo_morpho$tip_color_hex <- cols_wing_map[trimws(tolower(as.character(df_phylo_morpho$wing_color)))]
+na_idx <- which(is.na(df_phylo_morpho$tip_color_hex))
+if(length(na_idx) > 0) df_phylo_morpho$tip_color_hex[na_idx] <- "black" 
+white_idx <- which(df_phylo_morpho$tip_color_hex %in% c("white", "#FFFFFF", "#ffffff"))
+if(length(white_idx) > 0) df_phylo_morpho$tip_color_hex[white_idx] <- "gray40"
+
+# Legend
+legend_data <- data.frame(Color_Name = names(cols_wing_map), Color_Hex = as.character(cols_wing_map))
+legend_data$Color_Name[legend_data$Color_Hex == "beige"] <- "white"
+p_legend <- ggplot(legend_data, aes(x=1, y=1, color=Color_Name)) +
+    geom_point(size=4) +
+    scale_color_manual(name = "Wing Coloration", values = cols_wing_map) +
+    theme_void() +
+    theme(legend.position = "bottom", legend.title = element_text(face="bold"), legend.text = element_text(size=10))
+wing_legend <- get_legend(p_legend)
+
+# Tree
+clade_list <- split(df_phylo_morpho$species, df_phylo_morpho$clade)
+tree_grouped_full <- groupOTU(tree_phylo_morpho, clade_list)
+
+p_tree_final <- ggtree(tree_grouped_full, aes(color = group), layout = "rectangular", size = 1.1) %<+% df_phylo_morpho +
+    scale_color_manual(values = c("0" = "black", cols_clades)) +
+    geom_tiplab(aes(label = clean_label, color = I(tip_color_hex)), size = 2.8, fontface = "bold", align = TRUE, linesize = 0.3, offset = 0.02) +
+    theme_tree() + 
+    theme(legend.position = "none", plot.margin = margin(10, 0, 10, 10)) + 
+    xlim(0, max(node.depth.edgelength(tree_phylo_morpho)) * 1.4)
+
+# Violin
+tips_order_final <- get_taxa_name(p_tree_final)
+ordered_df <- df_phylo_morpho[match(tips_order_final, df_phylo_morpho$species), ]
+clade_appearance <- unique(ordered_df$clade)
+df_phylo_morpho$clade_ordered <- factor(df_phylo_morpho$clade, levels = rev(clade_appearance))
+
+p_violin_final <- ggplot(df_phylo_morpho, aes(x = clade_ordered, y = wing_length, fill = clade_ordered)) +
+    geom_violin(trim = FALSE, scale = "width", alpha = 0.8, color = NA) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA, alpha = 0.8) +
+    geom_jitter(width = 0.1, size = 1, alpha = 0.4, color = "black") +
+    scale_fill_manual(values = cols_clades) +
+    coord_flip() +
+    labs(title = "Wing Length Distribution", x = "", y = "Wing Length (mm)") +
+    theme_minimal() +
+    theme(legend.position = "none", axis.text.y = element_text(size = 10, face = "bold", color = "black"),
+          panel.grid.major.y = element_blank())
+
+main_plot <- plot_grid(p_tree_final, p_violin_final, ncol = 2, align = "h", axis = "bt", rel_widths = c(1.8, 1), labels = c("A", "B"))
+plot_grid(main_plot, wing_legend, ncol = 1, rel_heights = c(1, 0.1))
+```
+
+## 7. Comparative Summary Table
+
+Summary of evolutionary statistics and PGLS models.
+
+```{r summary_table}
+res_hover <- calculate_full_metrics("hovering_pauses", data_bin, tree_bin)
+res_trans <- calculate_full_metrics("transition_pauses", data_bin, tree_bin)
+res_color <- calculate_full_metrics("color", data_bin, tree_bin)
+
+summary_table <- data.frame(
+    Metric = names(res_hover),
+    Hovering = res_hover,
+    Transitions = res_trans,
+    Coloration = res_color,
+    row.names = NULL, stringsAsFactors = FALSE
+)
+
+# Highlighting significant results
+idx_pvals <- c(7, 11, 15)
+red_rows <- c()
+for (i in idx_pvals) {
+    if (as.numeric(summary_table[i, "Hovering"]) < 0.05 & 
+        as.numeric(summary_table[i, "Transitions"]) < 0.05 & 
+        as.numeric(summary_table[i, "Coloration"]) < 0.05) {
+        red_rows <- c(red_rows, i)
+    }
+}
+
+kbl_table <- summary_table %>%
+    kbl(caption = "Comparative Summary of Evolutionary Statistics and PGLS Models", align = "c") %>%
+    kable_classic(full_width = F, html_font = "Cambria") %>%
+    row_spec(0, bold = T, color = "white", background = "#2c3e50") %>%
+    column_spec(1, bold = T, border_right = T, width = "4cm", color = "#555") %>%
+    pack_rows("1. Evolutionary Signal (Categorical Trait)", 1, 4, label_row_css = "background-color:#ecf0f1;color:#333;font-weight:bold;") %>%
+    pack_rows("2. Model: Wing Length ~ Trait", 5, 8, label_row_css = "background-color:#d1f2eb;color:#0e6655;font-weight:bold;") %>%
+    pack_rows("3. Model: Body Mass ~ Trait", 9, 12, label_row_css = "background-color:#d6eaf8;color:#154360;font-weight:bold;") %>%
+    pack_rows("4. Model: Relation Wing Length vs Body Mass ~ Trait", 13, 16, label_row_css = "background-color:#fce8d6;color:#a04000;font-weight:bold;") %>%
+    row_spec(idx_pvals, bold = T)
+
+if (length(red_rows) > 0) kbl_table <- kbl_table %>% row_spec(red_rows, color = "red", bold = T)
+kbl_table
+```
