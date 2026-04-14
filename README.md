@@ -10,9 +10,10 @@ The goal of this project is to evaluate the evolutionary structure and adaptive 
 
 Key analyses include:
 * **Data & Phylogenetic Curation:** Taxonomic synchronization and manual addition of missing species to the phylogenetic tree using `bind.tip()`.
+* **Multi-Model Inference:** Selection of the best predictive models using Akaike Information Criterion (AIC/AICc) to evaluate the relative importance of distinct morphological traits and interactions (e.g., Wing vs. Tail lengths).
 * **Ancestral State Reconstruction (ACE):** Inference of the evolutionary history of binary traits (presence/absence of pauses and coloration) using Maximum Likelihood (ML) models.
 * **Phylogenetic Signal:** Evaluation of trait conservation using Fritz & Purvis' *D* statistic and Pagel's *Lambda*.
-* **PGLS Models:** Fitting of Phylogenetic Generalized Least Squares models to test the association between morphology (wing length, body mass) and behavior, statistically controlling for evolutionary history.
+* **PGLS Models:** Fitting of Phylogenetic Generalized Least Squares models to test the specific association between wing loading (`winglength_vs_mass`) and behavior, statistically controlling for evolutionary history.
 
 ## Repository Structure
 

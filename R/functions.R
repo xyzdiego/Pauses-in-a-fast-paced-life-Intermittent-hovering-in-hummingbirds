@@ -7,7 +7,6 @@
 # Required dependencies (must be loaded in the main script):
 #   - tidyverse (dplyr, ggplot2)
 #   - caper, phytools, phylolm
-#
 # ==============================================================================
 
 # Function to extract coefficients from phyloglm models
@@ -90,11 +89,11 @@ calculate_full_metrics <- function(col_name, df_full, phy_tree) {
     # WARNING: This function assumes the dataframe has columns named exactly:
     # "wing_length", "body_mass", "winglength_vs_mass"
     
-    morpho_vars <- c("wing_length", "body_mass", "winglength_vs_mass")
+    morpho_vars <- c("winglength_vs_mass")
     
-    # Explicit use of dplyr:: to avoid conflicts with other packages like MASS or raster
     data_base <- df_full %>%
-        dplyr::select(species, dplyr::all_of(col_name), dplyr::all_of(morpho_vars)) %>%
+        dplyr::select(species, dplyr::all_of(col_name), 
+                      dplyr::all_of(morpho_vars)) %>%
         dplyr::rename(trait_cat = dplyr::all_of(col_name)) %>%
         dplyr::filter(trait_cat %in% c("YES", "NO")) %>%
         tidyr::drop_na() %>%
@@ -110,7 +109,8 @@ calculate_full_metrics <- function(col_name, df_full, phy_tree) {
     fit_mk <- phytools::fitMk(tree_temp, states_vec, model = "ER")
     
     data_base$trait_bin <- ifelse(data_base$trait_cat == "YES", 1, 0)
-    comp_data_d <- caper::comparative.data(tree_temp, data_base, names.col = "species")
+    comp_data_d <- caper::comparative.data(tree_temp, data_base, 
+                                           names.col = "species")
     d_stat <- caper::phylo.d(comp_data_d, binvar = trait_bin, permut = 200)
     
     results <- c(

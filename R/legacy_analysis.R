@@ -147,13 +147,16 @@ calculate_full_metrics <- function(col_name, df_full, phy_tree) {
 
 # DATA IMPORT AND PROCESSING ---------------------------------------------------
 
-data_raw <- read_excel("Database_Simulation.xlsx", sheet = "Pausas_Tipo")
+data_raw <- read_excel("Data/Trochilidae_MorphoBehavior_Data.xlsx", 
+                       sheet = "Pausas_Tipo")
 data_raw <- data_raw[data_raw$Species != "Sternoclyta cyanopectus", ]
-tree_raw <- read.tree("arbol.nwk") 
+tree_raw <- read.tree("Data/arbol.nwk") 
 
 data_raw[, c(FALSE, sapply(data_raw[,-1], is.character))] <- 
     lapply(data_raw[, c(FALSE, sapply(data_raw[,-1], is.character))], factor)
 data_clean <- data_raw %>% clean_names()
+data_clean[,c("colorful", "muscle_type")] <- sapply(
+    data_clean[,c("colorful", "muscle_type")], factor)
 
 data_clean$species <- gsub(" ", "_", data_clean$species)
 tree_raw$tip.label <- gsub(" ", "_", tree_raw$tip.label)
@@ -222,6 +225,254 @@ data_bin$hovering_pauses_01 <- ifelse(data_bin$hovering_pauses == "YES", 1, 0)
 levels_bin <- c("NO", "YES")
 cols_bin <- RColorBrewer::brewer.pal(3, "Dark2")[1:2]
 names(cols_bin) <- levels_bin
+
+# VARIABLE IMPORTANCE SCREENING (MODEL SELECTION) -------------------------
+
+# ==============================================================================
+# ADVANCED MODEL SELECTION (MULTI-MODEL INFERENCE) - EXTENDED
+# ==============================================================================
+# Objetivo: Comparar hipótesis biológicas incluyendo morfometría completa.
+
+# 1. Definir TODAS las Hipótesis (Anteriores + Nuevas)
+formulas <- list(
+    "H0: Null Model (Azar)"          = "hovering_pauses_01 ~ 1",
+    "H1: Wing Length (Sustentación)" = "hovering_pauses_01 ~ wing_length",
+    "H2: Body Mass (Peso/Costo)"     = "hovering_pauses_01 ~ body_mass",
+    "H3: Wing + Mass (Compensación)" = "hovering_pauses_01 ~ wing_length + body_mass",
+    "H4: Wing + Tail + Mass"         = "hovering_pauses_01 ~ wing_length + tail_length + body_mass",
+    "H5: Wing Loading (Carga Alar)"  = "hovering_pauses_01 ~ winglength_vs_mass",
+    "H8: Tail Length (Estabilidad)"  = "hovering_pauses_01 ~ tail_length",
+    "H9: Total Length (Tamaño)"      = "hovering_pauses_01 ~ total_length",
+    "H10: Body Length (Aerodinámica)" = "hovering_pauses_01 ~ body_length",
+    "H11: Wing + Tail (Superficie Total)" = "hovering_pauses_01 ~ wing_length + tail_length",
+    "H12: Aerodynamic Shape"              = "hovering_pauses_01 ~ wing_length + tail_length + body_length"
+)
+
+# Añadir hábitat si existe (H5 y H6 originales)
+if(length(unique(data_bin$microhabitat)) > 1) {
+    formulas[["H6: Microhabitat"]] <- "hovering_pauses_01 ~ microhabitat"
+    formulas[["H7: Wing + Habitat"]] <- "hovering_pauses_01 ~ wing_length + microhabitat"
+}
+
+# 2. Ajustar Modelos y Extraer Métricas
+model_results <- data.frame(
+    Model_Name = character(),
+    Formula = character(),
+    AIC = numeric(),
+    AICc = numeric(),
+    Delta_AICc = numeric(),
+    Weight = numeric(),
+    P_Value_Main = numeric(), 
+    stringsAsFactors = FALSE
+)
+
+cat("Evaluando conjunto ampliado de modelos candidatos...\n")
+n <- nrow(data_bin) 
+
+for (name in names(formulas)) {
+    f <- as.formula(formulas[[name]])
+    
+    # Usamos try para evitar errores si alguna columna tiene NAs o falta
+    try({
+        # Ajustar modelo
+        mod <- phyloglm(f, data = data_bin, phy = tree_bin, method = "logistic_MPLE")
+        
+        # Calcular AIC y AICc
+        k <- length(coef(mod)) 
+        aic_val <- AIC(mod)
+        aicc_val <- aic_val + (2*k*(k+1)) / (n - k - 1)
+        
+        # Extraer P-valor del primer predictor
+        p_val <- NA
+        if (name != "H0: Null Model (Azar)") {
+            cfs <- summary(mod)$coefficients
+            idx <- which(rownames(cfs) != "(Intercept)")[1]
+            if(!is.na(idx)) p_val <- cfs[idx, 4]
+        }
+        
+        # Guardar
+        model_results <- rbind(model_results, data.frame(
+            Model_Name = name,
+            Formula = formulas[[name]],
+            AIC = aic_val,
+            AICc = aicc_val,
+            Delta_AICc = 0, 
+            Weight = 0,     
+            P_Value_Main = round(p_val, 5)
+        ))
+    }, silent = TRUE)
+}
+
+# 3. Calcular Delta AICc y Akaike Weights
+if(nrow(model_results) > 0) {
+    min_aicc <- min(model_results$AICc)
+    model_results$Delta_AICc <- round(model_results$AICc - min_aicc, 2)
+    
+    rel_ll <- exp(-0.5 * model_results$Delta_AICc)
+    model_results$Weight <- round(rel_ll / sum(rel_ll), 3)
+    
+    # Ordenar por mejor modelo
+    model_results <- model_results[order(model_results$Delta_AICc), ]
+    
+    # 4. Imprimir Tabla
+    cat("\n==============================================================================\n")
+    cat(" RANKING DE HIPÓTESIS (Morfología Completa)\n")
+    cat("==============================================================================\n")
+    print(model_results[, c("Model_Name", "Delta_AICc", "Weight", "P_Value_Main")])
+    cat("==============================================================================\n")
+    
+    # 5. Selección del Ganador
+    best_model_name <- model_results$Model_Name[1]
+    best_formula <- model_results$Formula[1]
+    
+    cat(sprintf("\n>>> MEJOR MODELO: %s <<<\n", best_model_name))
+    cat(sprintf(">>> FÓRMULA: %s <<<\n", best_formula))
+    
+    # Guardar fórmula para uso posterior
+    final_formula_obj <- as.formula(best_formula)
+    
+} else {
+    cat("\nError: No se pudieron ajustar los modelos. Verifica los nombres de las columnas.\n")
+}
+
+# ==============================================================================
+# FINAL MODEL SELECTION: INTERACTIONS, RATIOS & PCA
+# ==============================================================================
+# Objetivo: Probar si la "forma" o la interacción de variables supera al azar.
+
+cat("\n--- GENERANDO NUEVAS VARIABLES COMPLEJAS ---\n")
+
+# 1. Crear Ratios Biológicos
+data_bin$wing_tail_ratio <- data_bin$wing_length / data_bin$tail_length
+data_bin$wing_body_ratio <- data_bin$wing_length / data_bin$body_length
+
+# 2. Generar PCA (Resumen de Morfología) para evitar colinealidad
+# Seleccionamos solo las variables morfométricas numéricas
+morpho_matrix <- data_bin %>% 
+    select(wing_length, tail_length, body_length, total_length, body_mass) %>%
+    drop_na()
+
+# Ejecutar PCA
+pca_res <- prcomp(morpho_matrix, scale. = TRUE)
+summary(pca_res)
+
+# Extraer PC1 (Tamaño General) y PC2 (Forma/Alometría)
+# OJO: Aseguramos que el orden coincida (usando los rownames o el mismo df filtrado)
+# Como data_bin ya estaba filtrada por NAs en morpho vars en pasos previos, unimos directo:
+data_bin$PC1_Size <- pca_res$x[,1]
+data_bin$PC2_Shape <- pca_res$x[,2]
+
+cat("PCA Generado: PC1 suele ser Tamaño, PC2 suele ser Forma.\n")
+
+# 3. Definir Lista Final de Hipótesis (Incluyendo Interacciones)
+formulas_final <- list(
+    # --- Base ---
+    "H0: Null Model (Azar)"          = "hovering_pauses_01 ~ 1",
+    "H1: Wing Length"                = "hovering_pauses_01 ~ wing_length",
+    
+    # --- Ratios (Índices de Vuelo) ---
+    "H13: Wing/Tail Ratio (Agilidad)"   = "hovering_pauses_01 ~ wing_tail_ratio",
+    "H14: Wing/Body Ratio (Proporción)" = "hovering_pauses_01 ~ wing_body_ratio",
+    
+    # --- Interacciones (Sinergia) ---
+    # El * incluye los efectos individuales Y la interacción
+    "H15: Wing * Mass (Interacción)"  = "hovering_pauses_01 ~ wing_length * body_mass",
+    "H16: Wing * Tail (Interacción)"  = "hovering_pauses_01 ~ wing_length * tail_length",
+    
+    # --- Componentes Principales (Variables sintéticas) ---
+    "H17: PC1 (Tamaño Puro)"          = "hovering_pauses_01 ~ PC1_Size",
+    "H18: PC2 (Forma Pura)"           = "hovering_pauses_01 ~ PC2_Shape",
+    "H19: PC1 + PC2"                  = "hovering_pauses_01 ~ PC1_Size + PC2_Shape"
+)
+
+# 4. Loop de Evaluación (Igual que antes)
+model_results_final <- data.frame(
+    Model_Name = character(), AICc = numeric(), Delta_AICc = numeric(), 
+    Weight = numeric(), P_Value_Main = numeric(), stringsAsFactors = FALSE
+)
+
+cat("Evaluando modelos complejos...\n")
+n <- nrow(data_bin)
+
+for (name in names(formulas_final)) {
+    f <- as.formula(formulas_final[[name]])
+    try({
+        mod <- phyloglm(f, data = data_bin, phy = tree_bin, method = "logistic_MPLE")
+        k <- length(coef(mod))
+        aic_val <- AIC(mod)
+        aicc_val <- aic_val + (2*k*(k+1)) / (n - k - 1)
+        
+        # P-valor (del último término, usualmente la interacción o la variable principal)
+        cfs <- summary(mod)$coefficients
+        idx <- nrow(cfs) # Tomamos el último para ver si la interacción/variable nueva importa
+        p_val <- cfs[idx, 4]
+        
+        model_results_final <- rbind(model_results_final, data.frame(
+            Model_Name = name, AICc = aicc_val, Delta_AICc = 0, Weight = 0, 
+            P_Value_Main = round(p_val, 5)
+        ))
+    }, silent = TRUE)
+}
+
+# Cálculos finales
+if(nrow(model_results_final) > 0) {
+    min_aicc <- min(model_results_final$AICc)
+    model_results_final$Delta_AICc <- round(model_results_final$AICc - min_aicc, 2)
+    rel_ll <- exp(-0.5 * model_results_final$Delta_AICc)
+    model_results_final$Weight <- round(rel_ll / sum(rel_ll), 3)
+    model_results_final <- model_results_final[order(model_results_final$Delta_AICc), ]
+    
+    print(model_results_final)
+    
+    # Selección para el script
+    best_formula_final <- formulas_final[[model_results_final$Model_Name[1]]]
+    final_formula_obj <- as.formula(best_formula_final)
+}
+
+# ==============================================================================
+# VISUALIZACIÓN DE LA INTERACCIÓN GANADORA (WING * TAIL)
+# ==============================================================================
+
+# 1. Ajustar el modelo ganador final
+best_formula_text <- "hovering_pauses_01 ~ wing_length * tail_length"
+final_mod <- phyloglm(as.formula(best_formula_text), 
+                      data = data_bin, phy = tree_bin, 
+                      method = "logistic_MPLE")
+
+# Imprimir resumen estadístico para ver signos (+/-)
+cat("\n--- DETALLES DEL MODELO GANADOR (H16) ---\n")
+print(summary(final_mod))
+
+# 2. Generar Gráfico de Interacción
+# Creamos una variable categórica artificial para la Cola (Corta vs Larga) 
+# solo para propósitos de visualización en 2D.
+data_bin$tail_class <- cut(data_bin$tail_length, 
+                           breaks = quantile(data_bin$tail_length, probs = c(0, 0.5, 1)),
+                           labels = c("Short Tail", "Long Tail"), 
+                           include.lowest = TRUE)
+
+p_interaction <- ggplot(data_bin, aes(x = wing_length, y = hovering_pauses_01)) +
+    # Puntos reales (dispersos ligeramente para verlos mejor)
+    geom_jitter(aes(color = tail_class), height = 0.05, width = 0, alpha = 0.6, size = 3) +
+    
+    # Líneas de tendencia logística suavizadas por grupo de cola
+    geom_smooth(aes(group = tail_class, color = tail_class, fill = tail_class), 
+                method = "glm", 
+                method.args = list(family = "binomial"), 
+                alpha = 0.2) +
+    
+    scale_color_manual(values = c("Short Tail" = "#E69F00", "Long Tail" = "#56B4E9")) +
+    scale_fill_manual(values = c("Short Tail" = "#E69F00", "Long Tail" = "#56B4E9")) +
+    
+    labs(title = "Interaction Effect: Wing Length * Tail Length",
+         subtitle = "Cómo influye el largo de la cola en la relación Ala-Pausas",
+         x = "Wing Length (mm)",
+         y = "Probability of Hovering Pauses",
+         color = "Tail Category", fill = "Tail Category") +
+    theme_minimal() +
+    theme(legend.position = "bottom")
+
+print(p_interaction)
 
 # PHYLOGENETIC SIGNAL ANALYSIS (D) ---------------------------------------------
 
@@ -297,6 +548,7 @@ r2 <- setNames(factor(data_pagel_hab$habitat_bin), data_pagel_hab$species)
 
 if (length(levels(r1)) == 2 && length(levels(r2)) == 2){
     fit_dep_hab <- fitPagel(tree_hab, r1, r2, model = "ER")
+    print(fit_dep_hab)
 }
 
 # B. Correlation vs Foraging
@@ -317,6 +569,7 @@ r3 <- setNames(factor(data_pagel_for$forage_bin), data_pagel_for$species)
 
 if (length(levels(r1)) == 2 && length(levels(r3)) == 2){
     fit_dep_for <- fitPagel(tree_for, r1, r3, model = "ER")
+    print(fit_dep_for)
 }
 
 # TANGLEGRAM PLOT (MIRRORED TREE) ----------------------------------------------
@@ -483,8 +736,8 @@ summary_table <- data.frame(
     stringsAsFactors = FALSE
 )
 
-# Highlight logic: All 3 models must be significant (< 0.05)
-idx_pvals <- c(7, 11, 15)
+# Highlight logic: PGLS P-value is now row 7 (since we only assess Wing Loading)
+idx_pvals <- c(7)
 red_rows <- c()
 
 for (i in idx_pvals) {
@@ -506,13 +759,7 @@ kbl_table <- summary_table %>%
         "1. Evolutionary Signal (Categorical Trait)", 1, 4, 
         label_row_css = "background-color:#ecf0f1;color:#333;font-weight:bold;") %>%
     pack_rows(
-        "2. Model: Wing Length ~ Trait", 5, 8,
-        label_row_css = "background-color:#d1f2eb;color:#0e6655;font-weight:bold;") %>%
-    pack_rows(
-        "3. Model: Body Mass ~ Trait", 9, 12, 
-        label_row_css = "background-color:#d6eaf8;color:#154360;font-weight:bold;") %>%
-    pack_rows(
-        "4. Model: Relation Wing Length vs Body Mass ~ Trait", 13, 16, 
+        "2. Model: Wing Loading ~ Trait", 5, 8, 
         label_row_css = "background-color:#fce8d6;color:#a04000;font-weight:bold;") %>%
     row_spec(idx_pvals, bold = T)
 
@@ -521,6 +768,28 @@ if (length(red_rows) > 0) {
 }
 
 kbl_table
+
+# HYPOTHESIS VERIFICATION: BODY SIZE VS ADAPTATION -----------------------------
+
+# Extract specific coloration P-values 
+p_mass  <- as.numeric(summary_table[11, "Coloration"]) # Model 3: Mass ~ Color
+p_alloc <- as.numeric(summary_table[15, "Coloration"]) # Model 4: Wing/Mass ~ Color
+
+cat(sprintf("1. ¿Son las especies coloridas más grandes? (Modelo 3): P-valor = %.5f\n", 
+            p_mass))
+if(p_mass > 0.05) {
+    cat("   -> NO significativo. (Apoya: El color no es solo por ser grande)\n")
+} else {
+    cat("   -> Significativo.\n")
+}
+
+cat(sprintf("2. ¿Persiste la relación al corregir por masa? (Modelo 4): P-valor = %.5f\n", 
+            p_alloc))
+if(p_alloc < 0.05) {
+    cat("   -> SIGNIFICATIVO. (Apoya: Las alas son desproporcionadamente largas)\n")
+} else {
+    cat("   -> No significativo.\n")
+}
 
 # Transtition pauses ------------------------------------------------------
 
