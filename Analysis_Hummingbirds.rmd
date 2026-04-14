@@ -493,7 +493,99 @@ plot_grid(p_conf_hover, p_violin_hover, p_conf_color,
           labels = c("A", "B", "C", "D"))
 ```
 
-### 7.3 Clade-Level Morphology
+### 7.3 Transition Pauses Analysis
+
+Evolutionary history and morphological distribution for Transition Pauses.
+
+```{r transition_pauses, fig.width=14, fig.height=8}
+# Colorblind-Friendly Palette for Transition Pauses
+cols_trans_plt <- c("NO" = "#0072B2", "YES" = "#D55E00")
+
+# Data Filtering (Patagona is already excluded globally in Section 3)
+data_trans_plot <- data_bin %>%
+    filter(transition_pauses %in% c("YES", "NO"), !is.na(wing_length)) %>%
+    droplevels()
+
+states_trans <- setNames(as.character(data_trans_plot$transition_pauses),
+                         data_trans_plot$species)
+tree_trans <- keep.tip(tree_bin, names(states_trans))
+ace_trans <- ace(states_trans, tree_trans, type = "discrete", model = "ER")
+
+# Inherit Clade Colors for Tree Edges (Matching Tanglegram)
+tips_trans <- tree_trans$tip.label
+clades_trans <- data_trans_plot$clade[match(tips_trans, 
+                                            data_trans_plot$species)]
+unique_clades_trans <- unique(rev(clades_trans))
+
+safe_clade_palette_ext <- c("#332288", 
+                            "#88CCEE",
+                            "#44AA99", 
+                            "#117733", 
+                            "#999933", 
+                            "#DDCC77", 
+                            "#CC6677", 
+                            "#882255", 
+                            "#AA4499", 
+                            "#0072B2", 
+                            "#009E73",
+                            "gray50", 
+                            "gray70")
+
+cols_clades_trans <- setNames(safe_clade_palette_ext[1:length(unique_clades_trans)], 
+                              unique_clades_trans)
+
+edge_cols_trans <- rep("gray10", nrow(tree_trans$edge))
+for (c in unique_clades_trans) {
+    sp_clade <- intersect(data_trans_plot$species[data_trans_plot$clade == c],
+                          tree_trans$tip.label)
+    if (length(sp_clade) > 0) {
+        idx <- which.edge(tree_trans, sp_clade)
+        edge_cols_trans[idx] <- cols_clades_trans[c]
+    }
+}
+
+# 4. Tree Plot (Panel A)
+p_tree_trans <- as.grob(function() {
+    par(mar = c(0, 0, 2, 0)) 
+    plot(tree_trans, cex = 0.8, no.margin = TRUE, label.offset = 0.05, 
+         direction = "rightwards", show.tip.label = TRUE, 
+         edge.color = edge_cols_trans, edge.width = 3)
+    mtext("Transition Pauses Phylogeny", side = 3, line = -1, font = 2, cex = 1)
+    nodelabels(pie = ace_trans$lik.anc, piecol = cols_trans_plt, cex = 0.4)
+    tiplabels(pch = 21, bg = cols_trans_plt[states_trans], cex = 1.2, offset = 0.02)
+    legend("bottomleft", legend = names(cols_trans_plt), fill = cols_trans_plt, 
+           title = "Transitions", cex = 0.9, bty = "n")
+})
+
+# 5. Violin Plot (Panel B)
+p_violin_trans <- ggplot(data_trans_plot, aes(x = transition_pauses, 
+                                              y = wing_length, 
+                                              fill = transition_pauses)) +
+    geom_violin(trim = FALSE, alpha = 0.6, color = NA) +
+    geom_boxplot(width = 0.1, fill = "white", outlier.shape = NA, alpha = 0.8) +
+    geom_jitter(width = 0.1, size = 1.5, alpha = 0.4) +
+    scale_fill_manual(values = cols_trans_plt) +
+    labs(title = "Wing Length Distribution", 
+         y = "Wing Length (mm)", x = "Transition Pauses") +
+    theme_minimal() + theme(legend.position = "none", 
+                            plot.title = element_text(face = "bold", hjust = 0.5))
+
+# 6. Forest Plot (Panel C)
+df_conf_trans <- get_forest_data("transition_pauses", "wing_length", 
+                                 data_trans_plot, tree_trans, cols_trans_plt)
+p_forest_trans <- create_forest_plot(df_conf_trans, cols_trans_plt, 
+                                     "Evolutionary Effect (Model)")
+
+# 7. Assemble Composite Plot
+col_right <- plot_grid(p_violin_trans, p_forest_trans, ncol = 1, 
+                       labels = c("B", "C"))
+final_trans_plot <- plot_grid(p_tree_trans, col_right, ncol = 2, 
+                              labels = c("A", ""), rel_widths = c(1, 1)) 
+
+print(final_trans_plot)
+```
+
+### 7.4 Clade-Level Morphology
 
 ```{r clade_plot, fig.width=12, fig.height=12}
 df_phylo_morpho <- data_clean %>%
@@ -678,13 +770,14 @@ df_base <- data.frame(
 rownames(df_base) <- NULL
 
 df_formatted <- df_base
-# Índices dinámicos para p-values con las 3 morfometrías (filas 7, 11, 15)
+# Dynamic indices for p-values with 3 morphometrics (rows 7, 11, 15)
 for (r in seq(7, 15, by=4)) { 
     for(c in 2:4) {
         val_num <- as.numeric(df_formatted[r, c])
         if(!is.na(val_num) && val_num < 0.05) {
-            df_formatted[r, c] <- paste0("\\textcolor{red}{\\textbf{",
-                                         df_formatted[r, c], "}}")
+            # Use HTML tags instead of LaTeX for proper HTML rendering
+            df_formatted[r, c] <- paste0("<span style='color:red; font-weight:bold;'>", 
+                                         df_formatted[r, c], "</span>")
         }
     }
 }
@@ -701,6 +794,5 @@ tabla_final <- kbl(df_formatted, escape = FALSE, align = "lccc",
     pack_rows("4. Model: Wing Loading ~ Trait", 13, 16, bold = TRUE, 
               label_row_css = "background-color:#fadbd8;")
 
-# Imprimir la tabla explícitamente
 tabla_final
 ```
